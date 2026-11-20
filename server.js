@@ -3,134 +3,130 @@ const http = require('http');
 const { Server } = require('socket.io');
 
 const app = express();
-app.get('/', (req, res) => res.send('Game server is running'));
+app.get('/', (req, res) => res.send('Science Hunt server v2 is running'));
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
 
-const W = {
-  laser:  { dmg: 10, rate: 0.18, spd: 45, life: 1.6 },
-  plasma: { dmg: 20, rate: 0.45, spd: 28, life: 1.6 },
-  rail:   { dmg: 50, rate: 1.1,  spd: 80, life: 1.6 },
-  arc:    { dmg: 9,  rate: 0.65, spd: 32, life: 0.55, pel: 3 }
-};
-const PIL = [[-12,-8],[12,-8],[-12,10],[12,10],[0,0],[-24,-22],[24,-22],[-24,24],[24,24]];
-const MAX_HUMANS = 8;   // จำนวนผู้เล่นจริงสูงสุดในห้อง
-const MIN_TOTAL = 4;    // ถ้าคนไม่ครบ จะเติมบอทให้ครบจำนวนนี้
+// จุดวางกล่อง (ต้องตรงกับในหน้าเกม): ห้องละ 1 จุด x12 ห้อง + ทางเดิน 3 จุด
+const SP = [];
+[-25, -15, -5, 5, 15, 25].forEach(cx => SP.push([cx, 13], [cx, -13]));
+SP.push([-20, 0], [0, 0], [20, 0]);
 
-let P = {}, B = [], bid = 0, botN = 0;
-const nrm = a => Math.atan2(Math.sin(a), Math.cos(a));
+// คำถามวิทยาศาสตร์: [คำถาม, [ตัวเลือก], ลำดับคำตอบที่ถูก (เริ่มที่ 0)]
+const QS = [
+  ['น้ำบริสุทธิ์เดือดที่กี่องศาเซลเซียส (ระดับน้ำทะเล)?', ['50', '100', '150', '212'], 1],
+  ['ก๊าซใดที่พืชใช้ในการสังเคราะห์แสง?', ['ออกซิเจน', 'ไนโตรเจน', 'คาร์บอนไดออกไซด์', 'ฮีเลียม'], 2],
+  ['ดาวเคราะห์ใดอยู่ใกล้ดวงอาทิตย์ที่สุด?', ['ดาวศุกร์', 'ดาวพุธ', 'โลก', 'ดาวอังคาร'], 1],
+  ['สัญลักษณ์ธาตุของทองคำคือข้อใด?', ['Ag', 'Au', 'Gd', 'Go'], 1],
+  ['อวัยวะใดสูบฉีดเลือดไปทั่วร่างกาย?', ['ปอด', 'ตับ', 'หัวใจ', 'ไต'], 2],
+  ['แสงเดินทางได้เร็วที่สุดในตัวกลางใด?', ['น้ำ', 'แก้ว', 'อากาศ', 'สุญญากาศ'], 3],
+  ['สูตรเคมีของน้ำคือข้อใด?', ['CO2', 'H2O', 'O2', 'NaCl'], 1],
+  ['หน่วยวัดแรงในระบบ SI คือข้อใด?', ['จูล', 'วัตต์', 'นิวตัน', 'แอมแปร์'], 2],
+  ['กระดูกของผู้ใหญ่มีประมาณกี่ชิ้น?', ['106', '206', '306', '406'], 1],
+  ['ดาวฤกษ์ที่อยู่ใกล้โลกที่สุดคือข้อใด?', ['ดาวเหนือ', 'ซิริอุส', 'ดวงอาทิตย์', 'ดาวอังคาร'], 2],
+  ['สัตว์ชนิดใดเป็นสัตว์เลี้ยงลูกด้วยนม?', ['กบ', 'โลมา', 'ฉลาม', 'จระเข้'], 1],
+  ['ก๊าซที่มีมากที่สุดในบรรยากาศโลกคือข้อใด?', ['ออกซิเจน', 'ไนโตรเจน', 'อาร์กอน', 'ไฮโดรเจน'], 1],
+  ['สารที่เป็นกลางมีค่า pH เท่าใด?', ['0', '7', '10', '14'], 1],
+  ['สิ่งใดที่เซลล์พืชมี แต่เซลล์สัตว์ไม่มี?', ['นิวเคลียส', 'ผนังเซลล์', 'ไมโทคอนเดรีย', 'เยื่อหุ้มเซลล์'], 1],
+  ['ปรากฏการณ์ที่ดวงจันทร์บังดวงอาทิตย์เรียกว่าอะไร?', ['จันทรุปราคา', 'สุริยุปราคา', 'น้ำขึ้นน้ำลง', 'ฤดูกาล'], 1],
+  ['เหล็กเป็นสนิมเพราะทำปฏิกิริยากับอะไร?', ['ไนโตรเจน', 'ออกซิเจนและน้ำ', 'ฮีเลียม', 'แสงแดดอย่างเดียว'], 1],
+  ['พลังงานที่สะสมอยู่ในอาหารเรียกว่าอะไร?', ['พลังงานเคมี', 'พลังงานเสียง', 'พลังงานนิวเคลียร์', 'พลังงานแม่เหล็ก'], 0],
+  ['ดาวเคราะห์ดวงใดมีวงแหวนเด่นชัดที่สุด?', ['ดาวพฤหัสบดี', 'ดาวเสาร์', 'ดาวพุธ', 'ดาวศุกร์'], 1],
+  ['ความเร่งโน้มถ่วงของโลกประมาณกี่ m/s²?', ['1.6', '9.8', '24', '98'], 1],
+  ['เลือดลำเลียงออกซิเจนด้วยส่วนประกอบใด?', ['เกล็ดเลือด', 'เม็ดเลือดขาว', 'เม็ดเลือดแดง', 'พลาสมาเท่านั้น'], 2]
+];
+const WK = ['laser', 'plasma', 'rail', 'arc'];
+const ROUND = 180, MAXH = 10, NBOX = 8, PICK = 1.5;
+const FXK = ['', 's', 'f', 'g', 'z'];   // 1 ช้า, 2 สลับปุ่ม, 3 หมอก, 4 แช่แข็ง
+
+let P = {}, BX = [], RQ = [], T = ROUND, PH = 0, OV = 0;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-function rnd() { const a = Math.random() * 6.28, r = 18 + Math.random() * 14; return [Math.cos(a) * r, Math.sin(a) * r]; }
+const pick = a => a[Math.random() * a.length | 0];
+const mask = p => (p.fx.s > 0 ? 1 : 0) | (p.fx.f > 0 ? 2 : 0) | (p.fx.g > 0 ? 4 : 0) | (p.fx.z > 0 ? 8 : 0);
 
-function mkPlayer(id, info, bot) {
-  const [x, z] = rnd();
-  return {
-    id, bot,
-    name: String(info.name || 'Player').slice(0, 12),
-    col: clamp(info.col | 0, 0, 5),
-    helm: clamp(info.helm | 0, 0, 2),
-    wk: W[info.wk] ? info.wk : 'laser',
-    x, z, ang: 0, hp: 100, k: 0, cd: 0, rt: 0, dead: false, st: 0, sd: 1
-  };
+function addBox() {
+  const used = new Set(BX.map(b => b.s));
+  const f = SP.map((_, i) => i).filter(i => !used.has(i));
+  if (f.length) BX.push({ s: pick(f), by: null });
 }
+function resetRound() {
+  T = ROUND; PH = 0; BX = []; RQ = [];
+  for (let i = 0; i < NBOX; i++) addBox();
+  for (const p of Object.values(P)) { p.score = 0; p.item = 0; p.fx = { s: 0, f: 0, g: 0, z: 0 }; p.lock = 0; p.quiz = null; }
+}
+resetRound();
 
 function roster() {
-  io.to('battle').emit('roster', Object.values(P).map(p => ({
-    id: p.id, name: p.name, col: p.col, helm: p.helm, wk: p.wk, bot: p.bot
-  })));
+  io.to('battle').emit('roster', Object.values(P).map(p => ({ id: p.id, name: p.name, col: p.col, helm: p.helm, wk: p.wk })));
 }
-
-function fill() {
-  const humans = Object.values(P).filter(p => !p.bot).length;
-  const bots = Object.values(P).filter(p => p.bot);
-  const want = humans ? Math.max(0, MIN_TOTAL - humans) : 0;
-  while (bots.length > want) delete P[bots.pop().id];
-  while (bots.length < want) {
-    const n = ++botN, ks = Object.keys(W);
-    const b = mkPlayer('bot' + n, { name: 'BOT-' + n, col: Math.random() * 6 | 0, helm: Math.random() * 3 | 0, wk: ks[Math.random() * 4 | 0] }, true);
-    P['bot' + n] = b; bots.push(b);
-  }
+function drop(id) {
+  const p = P[id]; if (!p) return;
+  if (p.quiz) p.quiz.b.by = null;
+  delete P[id];
+  const s = io.sockets.sockets.get(id); if (s) s.leave('battle');
   roster();
 }
-
-function drop(id) {
-  if (!P[id]) return;
-  delete P[id];
-  const s = io.sockets.sockets.get(id);
-  if (s) s.leave('battle');
-  fill();
+function makeQuiz(p, b) {
+  let k;
+  do { k = pick(QS); } while (k === p.lastQ && QS.length > 1);
+  p.lastQ = k;
+  const order = [0, 1, 2, 3].sort(() => Math.random() - 0.5);
+  p.quiz = { b, ans: order.indexOf(k[2]), t: 12 };
+  io.to(p.id).emit('quiz', { q: k[0], c: order.map(i => k[1][i]), t: 12 });
 }
-
-function fire(p, a) {
-  if (p.dead || p.cd > 0.05 || B.length > 400) return;
-  const w = W[p.wk]; p.cd = w.rate;
-  const n = w.pel || 1;
-  for (let i = 0; i < n; i++) {
-    const an = a + (n > 1 ? (i - 1) * 0.14 : 0);
-    B.push({
-      id: ++bid, o: p.id, wk: p.wk, a: an,
-      x: p.x + Math.sin(p.ang) + Math.cos(p.ang) * 0.6,
-      z: p.z + Math.cos(p.ang) - Math.sin(p.ang) * 0.6,
-      vx: Math.sin(an) * w.spd, vz: Math.cos(an) * w.spd,
-      dmg: w.dmg, life: w.life
-    });
+function resolve(p, ok) {
+  const qz = p.quiz; if (!qz) return;
+  p.quiz = null;
+  if (ok) {
+    BX = BX.filter(b => b !== qz.b); RQ.push(5);
+    p.score += 10; p.item = 1 + (Math.random() * 4 | 0);
+    io.to(p.id).emit('result', { ok: 1, item: p.item, ans: qz.ans });
+  } else {
+    qz.b.by = null; p.lock = 3;
+    io.to(p.id).emit('result', { ok: 0, ans: qz.ans });
   }
-}
-
-function hit(t, b) {
-  t.hp -= b.dmg;
-  if (t.hp <= 0) {
-    t.hp = 0; t.dead = true; t.rt = 2.5;
-    const k = P[b.o]; if (k) k.k++;
-    io.to('battle').emit('kill', { vid: t.id, vn: t.name, kid: b.o, kn: k ? k.name : '' });
-  }
-}
-
-function mv(p, dt, f, s, turn) {
-  p.ang = nrm(p.ang + turn * dt);
-  const v = 7 * dt;
-  p.x += (Math.sin(p.ang) * f + Math.cos(p.ang) * s) * v;
-  p.z += (Math.cos(p.ang) * f - Math.sin(p.ang) * s) * v;
-  for (const c of PIL) {
-    const dx = p.x - c[0], dz = p.z - c[1], d = Math.hypot(dx, dz), m = 2.0;
-    if (d < m && d > 0) { p.x = c[0] + dx / d * m; p.z = c[1] + dz / d * m; }
-  }
-  p.x = clamp(p.x, -38, 38); p.z = clamp(p.z, -38, 38);
-}
-
-function ai(p, dt, ps) {
-  let tg = null, bd = 1e9;
-  for (const o of ps) {
-    if (o === p || o.dead) continue;
-    const d = Math.hypot(o.x - p.x, o.z - p.z);
-    if (d < bd) { bd = d; tg = o; }
-  }
-  if (!tg) return;
-  const diff = nrm(Math.atan2(tg.x - p.x, tg.z - p.z) - p.ang);
-  p.st -= dt;
-  if (p.st <= 0) { p.st = 1 + Math.random() * 2; p.sd = Math.random() < 0.5 ? 1 : -1; }
-  mv(p, dt * 0.6, bd > 12 ? 1 : (bd < 6 ? -0.6 : 0), p.sd * 0.5, clamp(diff * 4, -2, 2));
-  if (Math.abs(diff) < 0.2 && bd < 32) fire(p, p.ang + (Math.random() - 0.5) * 0.22);
 }
 
 io.on('connection', (s) => {
   s.on('join', (info) => {
     if (P[s.id]) return;
-    if (Object.values(P).filter(p => !p.bot).length >= MAX_HUMANS) { s.emit('full'); return; }
-    const p = mkPlayer(s.id, info || {}, false);
+    info = info || {};
+    if (Object.keys(P).length >= MAXH) { s.emit('full'); return; }
+    if (!Object.keys(P).length) resetRound();
+    const p = {
+      id: s.id, name: String(info.name || 'Player').slice(0, 12),
+      col: clamp(info.col | 0, 0, 5), helm: clamp(info.helm | 0, 0, 2),
+      wk: WK.includes(info.wk) ? info.wk : 'laser',
+      x: pick([-27, -10, 10, 27]) + (Math.random() - 0.5) * 2, z: 0, ang: 0,
+      score: 0, item: 0, fx: { s: 0, f: 0, g: 0, z: 0 }, lock: 0, quiz: null, lastQ: null
+    };
     P[s.id] = p; s.join('battle');
     s.emit('welcome', { id: s.id, x: p.x, z: p.z });
-    fill();
+    roster();
   });
   s.on('input', (d) => {
-    const p = P[s.id]; if (!p || p.dead || !d) return;
+    const p = P[s.id]; if (!p || !d) return;
     const x = +d.x, z = +d.z, a = +d.a;
     if (!isFinite(x) || !isFinite(z) || !isFinite(a)) return;
-    p.x = clamp(x, -38, 38); p.z = clamp(z, -38, 38); p.ang = a;
+    p.x = clamp(x, -29, 29); p.z = clamp(z, -17, 17); p.ang = a;
   });
-  s.on('fire', (d) => {
-    const p = P[s.id]; if (!p || !d) return;
-    const a = +d.a; if (isFinite(a)) fire(p, a);
+  s.on('answer', (d) => {
+    const p = P[s.id]; if (!p || !p.quiz || !d) return;
+    const i = +d.i; if (i >= 0 && i < 4) resolve(p, i === p.quiz.ans);
+  });
+  s.on('use', () => {
+    const p = P[s.id]; if (!p || PH || !p.item) return;
+    let t = null, bd = 25;
+    for (const o of Object.values(P)) {
+      if (o === p) continue;
+      const d = Math.hypot(o.x - p.x, o.z - p.z);
+      if (d < bd) { bd = d; t = o; }
+    }
+    if (!t) { s.emit('used', { none: 1 }); return; }
+    t.fx[FXK[p.item]] = p.item === 4 ? 3 : 6;
+    io.to(t.id).emit('hit', { n: p.name, item: p.item });
+    s.emit('used', { n: t.name, item: p.item });
+    p.item = 0;
   });
   s.on('leave', () => drop(s.id));
   s.on('disconnect', () => drop(s.id));
@@ -138,40 +134,41 @@ io.on('connection', (s) => {
 
 let last = Date.now();
 setInterval(() => {
-  const now = Date.now(), dt = Math.min((now - last) / 1000, 0.1);
+  const now = Date.now(), dt = Math.min((now - last) / 1000, 0.2);
   last = now;
   const ps = Object.values(P);
-  if (!ps.some(p => !p.bot)) { B = []; return; }   // ไม่มีผู้เล่นจริง = หยุดคำนวณ
+  if (!ps.length) return;
 
-  for (const p of ps) {
-    p.cd -= dt;
-    if (p.dead) {
-      p.rt -= dt;
-      if (p.rt <= 0) { p.dead = false; p.hp = 100; const r = rnd(); p.x = r[0]; p.z = r[1]; }
-      continue;
+  if (PH === 1) {
+    OV -= dt;
+    if (OV <= 0) resetRound();
+  } else {
+    T -= dt;
+    if (T <= 0) {
+      PH = 1; OV = 8;
+      ps.forEach(p => { if (p.quiz) { p.quiz.b.by = null; p.quiz = null; } });
+      io.to('battle').emit('over', { r: ps.slice().sort((a, b) => b.score - a.score).map(p => [p.name, p.score]) });
     }
-    if (p.bot) ai(p, dt, ps);
   }
-
-  const N = 4;   // แบ่งขั้นย่อย กันกระสุนเร็วทะลุตัวผู้เล่น
-  for (let s = 0; s < N; s++) {
-    for (let i = B.length - 1; i >= 0; i--) {
-      const b = B[i];
-      b.x += b.vx * dt / N; b.z += b.vz * dt / N; b.life -= dt / N;
-      let dead = b.life <= 0 || Math.abs(b.x) > 40 || Math.abs(b.z) > 40;
-      if (!dead) for (const c of PIL) if (Math.hypot(b.x - c[0], b.z - c[1]) < 1.4) { dead = true; break; }
-      if (!dead) for (const t of ps) {
-        if (t.id === b.o || t.dead) continue;
-        if (Math.hypot(b.x - t.x, b.z - t.z) < 0.8) { hit(t, b); dead = true; break; }
+  if (PH === 0) {
+    for (let i = RQ.length - 1; i >= 0; i--) { RQ[i] -= dt; if (RQ[i] <= 0) { RQ.splice(i, 1); addBox(); } }
+    for (const p of ps) {
+      for (const k in p.fx) p.fx[k] = Math.max(0, p.fx[k] - dt);
+      p.lock = Math.max(0, p.lock - dt);
+      if (p.quiz) { p.quiz.t -= dt; if (p.quiz.t <= 0) resolve(p, false); continue; }
+      if (p.lock > 0) continue;
+      for (const b of BX) {
+        if (b.by) continue;
+        const q = SP[b.s];
+        if (Math.hypot(p.x - q[0], p.z - q[1]) < PICK) { b.by = p.id; makeQuiz(p, b); break; }
       }
-      if (dead) B.splice(i, 1);
     }
   }
-
   io.to('battle').emit('state', {
-    p: ps.map(p => [p.id, +p.x.toFixed(2), +p.z.toFixed(2), +p.ang.toFixed(2), p.hp, p.k, p.dead ? 1 : 0]),
-    b: B.map(b => [b.id, +b.x.toFixed(2), +b.z.toFixed(2), b.wk, +b.a.toFixed(2)])
+    t: Math.ceil(Math.max(0, T)), ph: PH,
+    p: ps.map(p => [p.id, +p.x.toFixed(2), +p.z.toFixed(2), +p.ang.toFixed(2), p.score, p.item, mask(p)]),
+    b: BX.map(b => b.s)
   });
-}, 33);
+}, 50);
 
 server.listen(process.env.PORT || 3000, () => console.log('running'));
